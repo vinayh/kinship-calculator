@@ -43,7 +43,9 @@ type AgeRel = "elder" | "younger" | "unknown";
 type StepType =
   | { kind: "father" }
   | { kind: "mother" }
-  | { kind: "spouse" }
+  // | { kind: "spouse" }
+  | { kind: "husband" }
+  | { kind: "wife" }
   | { kind: "son" }
   | { kind: "daughter" }
   | { kind: "sibling"; gender: Gender; age: AgeRel };
@@ -54,36 +56,41 @@ interface Person {
   row: number; // lower numbers are older generations (row 1 above row 2)
   gender: Gender; // known when step implies it (e.g. father → male)
   // For determining terms that depend on relative age vs a reference
-  refForAge?: "you" | "father" | "mother" | "spouse" | "self";
+  refForAge?: "you" | "father" | "mother" | "husband" | "wife" | "self";
+  noSiblingInGeneration: boolean; // true if string of spouse steps without sibling steps
 }
 
 // Starting point: You at A2. User selects their gender.
 function startPerson(userGender: Gender): Person {
-  return { col: "A", row: 2, gender: userGender, refForAge: "you" };
+  return { col: "A", row: 2, gender: userGender, refForAge: "you", noSiblingInGeneration: false };
 }
 
 function move(person: Person, step: StepType): Person {
   const p = { ...person };
   switch (step.kind) {
     case "father":
-      return { col: p.col, row: p.row - 1, gender: "male", refForAge: "father" };
+      return { col: p.col, row: p.row - 1, gender: "male", refForAge: "father", noSiblingInGeneration: true };
     case "mother":
-      return { col: otherCol(p.col), row: p.row - 1, gender: "female", refForAge: "mother" };
-    case "spouse":
-      return { col: otherCol(p.col), row: p.row, gender: p.gender === "male" ? "female" : p.gender === "female" ? "male" : "unknown", refForAge: "spouse" };
+      return { col: otherCol(p.col), row: p.row - 1, gender: "female", refForAge: "mother", noSiblingInGeneration: true };
+    case "husband":
+      return { col: p.gender === "male" ? p.col : otherCol(p.col), row: p.row, gender: "male", refForAge: "husband", noSiblingInGeneration: p.noSiblingInGeneration };
+    // return { col: otherCol(p.col), row: p.row, gender: "male", refForAge: "husband" };
+    case "wife":
+      return { col: p.gender === "female" ? p.col : otherCol(p.col), row: p.row, gender: "female", refForAge: "wife", noSiblingInGeneration: p.noSiblingInGeneration };
+    // return { col: otherCol(p.col), row: p.row, gender: "female", refForAge: "wife" };
     case "son": {
       // Children are placed one row below the FATHER's column (Rule #1/"conversely" in the chart)
       // i.e., if the current person is male, child stays in same column; if female, child is in spouse's column
       const childCol: Col = p.gender === "male" ? p.col : otherCol(p.col);
-      return { col: childCol, row: p.row + 1, gender: "male", refForAge: "self" };
+      return { col: childCol, row: p.row + 1, gender: "male", refForAge: "self", noSiblingInGeneration: true };
     }
     case "daughter": {
       const childCol: Col = p.gender === "male" ? p.col : otherCol(p.col);
-      return { col: childCol, row: p.row + 1, gender: "female", refForAge: "self" };
+      return { col: childCol, row: p.row + 1, gender: "female", refForAge: "self", noSiblingInGeneration: true };
     }
     case "sibling":
       // Sibling stays in the same block; gender & age supplied by the step; for age comparisons the reference is the person whose sibling it is
-      return { col: p.col, row: p.row, gender: step.gender, refForAge: p.refForAge };
+      return { col: p.col, row: p.row, gender: step.gender, refForAge: p.refForAge, noSiblingInGeneration: false };
   }
 }
 
@@ -100,8 +107,11 @@ function simulate(userGender: Gender, steps: StepType[]): Person[] {
 
 // Figure out the Kannada kinship term for the located person relative to YOU
 function labelFor(person: Person, path: StepType[], userGender: Gender, trace?: Person[]): string {
-  const { col, row, gender } = person;
+  const { col, row, gender, noSiblingInGeneration } = person;
   const last = path[path.length - 1];
+  console.log(path)
+
+  if (path.length === 0) return "You";
 
   // Special direct terms
   if (row === 2 && col === "A") {
@@ -127,28 +137,25 @@ function labelFor(person: Person, path: StepType[], userGender: Gender, trace?: 
       effectiveCol = parent.gender === "male" ? parent.col : otherCol(parent.col);
     }
 
-    if (effectiveCol === "A") {
-      if (gender === "male") {
-        if (path.at(-1)?.kind === "father") return "Appa (father)";
-        return "doDDappa/chikkappa (father’s brother)";
-      } else if (gender === "female") {
-        return "Atthe (father’s sister / paternal aunt)";
-      }
+    if (gender === "male") {
+      if (noSiblingInGeneration) return "Appa (father)";
+      // if ((path.at(-2)?.kind === "father" || path.at(-2)?.kind === "mother") && path.at(-1)?.kind === "husband") return "Appa (father)";
+      return (effectiveCol === "A") ? "doDDappa/chikkappa (father’s brother)" : "MAva (maternal uncle)";
     }
-    if (effectiveCol === "B") {
-      if (gender === "female") {
-        if (path.at(-1)?.kind === "mother") return "Amma (mother)";
-        return "doDDamma/chikkamma (mother’s sister)";
-      } else if (gender === "male") {
-        return "MAva (maternal uncle)";
-      }
+    else if (gender === "female") {
+      if (noSiblingInGeneration) return "Amma (mother)";
+      // if ((path.at(-2)?.kind === "mother" || path.at(-2)?.kind === "father") && path.at(-1)?.kind === "wife") return "Amma (mother)";
+      return (effectiveCol === "A") ? "Atthe (father’s sister / paternal aunt)" : "doDDamma/chikkamma (mother’s sister)";
     }
   }
 
   // Spouse’s block (row 2, col B)
   if (row === 2 && col === "B") {
-    if (path.at(-1)?.kind === "spouse") {
-      return userGender === "male" ? "HenDathi (wife)" : userGender === "female" ? "GanDa (husband)" : "Spouse";
+    if (path.length === 1 && path.at(-1)?.kind === "husband") {
+      return "GanDa (husband)";
+    }
+    if (path.length === 1 && path.at(-1)?.kind === "wife") {
+      return "HenDathi (wife)";
     }
 
     // Spouse’s siblings OR your cross-cousins – need age and gender
@@ -167,19 +174,28 @@ function labelFor(person: Person, path: StepType[], userGender: Gender, trace?: 
   if (row === 3) {
     if (gender === "male") {
       if (path.at(-1)?.kind === "son") return "Maga (son)";
-      if (path.at(-1)?.kind === "spouse") return "ALiya (son-in-law)"; // spouse of daughter
+      if (path.at(-1)?.kind === "husband") return "ALiya (son-in-law)"; // spouse of daughter
       return "Mommagga (grandson)";
     }
     if (gender === "female") {
       if (path.at(-1)?.kind === "daughter") return "MagaLu (daughter)";
-      if (path.at(-1)?.kind === "spouse") return "Sose (daughter-in-law)"; // spouse of son
+      if (path.at(-1)?.kind === "wife") return "Sose (daughter-in-law)"; // spouse of son
       return "Mommagalu (granddaughter)";
     }
   }
 
-  // Grandparents (row 0 or upward)
-  if (row <= 0) {
+  if (row === 4) {
+    if (gender === "male") return "Mommagga (grandson)";
+    if (gender === "female") return "Mommagalu (granddaughter)";
+  }
+
+  // Grandparents (row 0)
+  if (row === 0) {
     return gender === "male" ? "Ajja (grandfather)" : gender === "female" ? "Ajji (grandmother)" : "Ajja/Ajji (grandparent)";
+  }
+
+  if (row === -1) {
+    return gender === "male" ? "Muttajja (great-grandfather)" : gender === "female" ? "Muttajji (great-grandmother)" : "Muttajja/Muttajji (great-grandparent)";
   }
 
   // Fallback
@@ -241,54 +257,56 @@ function App() {
           </div>
         </header>
 
-        <div className="grid md:grid-cols-3 gap-4">
-          <ControlCard title="Go to…">
-            <div className="flex flex-wrap gap-2">
-              <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "father" })}>Father</button>
-              <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "mother" })}>Mother</button>
-              <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "spouse" })}>Spouse</button>
-              <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "son" })}>Son</button>
-              <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "daughter" })}>Daughter</button>
-            </div>
-          </ControlCard>
+        <div className="grid md:grid-cols-3 gap-2">
+          <div className="flex col-span-2">
+            <ControlCard title="Add a…">
+              <div className="grid grid-cols-2 gap-2">
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "father" })}>Father</button>
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "mother" })}>Mother</button>
+                {/* <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "spouse" })}>Spouse</button> */}
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "husband" })}>Husband</button>
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "wife" })}>Wife</button>
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "son" })}>Son</button>
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => add({ kind: "daughter" })}>Daughter</button>
+              </div>
+              <SiblingButtons onAdd={add} />
+              <p className="text-xs text-gray-500 dark:text-gray-300">Age is interpreted relative to the person whose sibling you’re taking (e.g., spouse’s elder sister = elder relative to your spouse).</p>
+            </ControlCard>
+          </div>
 
-          <ControlCard title="Add a sibling…">
-            <div className="grid grid-cols-2 gap-2">
-              <SiblingButtons onAdd={add} gender="male" />
-              <SiblingButtons onAdd={add} gender="female" />
-            </div>
-            <p className="text-xs text-gray-500 dark:text-gray-300">Age is interpreted relative to the person whose sibling you’re taking (e.g., spouse’s elder sister = elder relative to your spouse).</p>
-          </ControlCard>
+          <div className="flex">
+            <ControlCard title="Result">
+              <div className="flex-grow flex items-center text-lg md:text-xl font-semibold px-3">
+                {label}
+              </div>
 
-          <ControlCard title="Path">
-            <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={pop} disabled={!steps.length}>Undo</button>
+                <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={reset} disabled={!steps.length}>Reset</button>
+              </div>
+
+            </ControlCard>
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="rounded-2xl border p-5 space-y-3 flex-shrink-0">
+            <div className="col-span-2">
               {steps.length === 0 ? (
-                <span className="text-sm text-gray-500 dark:text-gray-300">Start at “You”. Add steps to compose a relation.</span>
+                <span className="text-sm text-gray-500 dark:text-gray-300">Starting at yourself, add steps to compose a relation.</span>
               ) : (
                 steps.map((s, i) => <StepBadge step={s} key={i} i={i} />)
               )}
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={pop} disabled={!steps.length}>Undo</button>
-              <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={reset} disabled={!steps.length}>Reset</button>
-            </div>
-          </ControlCard>
-        </div>
 
-        <div className="grid md:grid-cols-3 gap-4 items-start">
-          <div className="md:col-span-2 rounded-2xl border p-5 space-y-3">
-            <div className="text-sm uppercase tracking-wide text-gray-500 dark:text-gray-300">Result</div>
-            <div className="text-lg md:text-xl font-semibold">{label}</div>
-            <div className="text-sm text-gray-600 dark:text-gray-200">Matrix location: <span className="font-mono">{dest.col}{dest.row}</span> &middot; Gender: {dest.gender}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-300">Trace: {trace.map((p, i) => (<span key={i} className="font-mono">{p.col}{p.row}{i < trace.length - 1 ? ' → ' : ''}</span>))}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-200 py-3">Matrix location: <span className="font-mono">{dest.col}{dest.row}</span> &middot; Gender: {dest.gender}</div>
+              <div className="text-xs text-gray-500 dark:text-gray-300">Trace: {trace.map((p, i) => (<span key={i} className="font-mono">{p.col}{p.row}{i < trace.length - 1 ? ' → ' : ''}</span>))}</div>
+            </div>
           </div>
-
           <div className="rounded-2xl border p-5 space-y-3">
             <div className="text-sm uppercase tracking-wide text-gray-500 dark:text-gray-300">Quick examples</div>
             <Examples onRun={(steps) => setSteps(steps)} />
           </div>
         </div>
-
         <footer className="text-xs text-gray-500 dark:text-gray-300">
           Built for exploration; not all edge cases are handled (e.g., cross-generational marriages). Terms and rules follow <a href="https://www.ravikiran.com/blog/examined/202009/the-south-indian-relationship-chart/">Ravikiran Rao’s chart</a>.
         </footer>
@@ -297,15 +315,23 @@ function App() {
   );
 }
 
-const SiblingButtons: React.FC<{ onAdd: (s: StepType) => void; gender: Gender }> = ({ onAdd, gender }) => {
-  const label = gender === "male" ? "Brother" : "Sister";
+const SiblingButtons: React.FC<{ onAdd: (s: StepType) => void }> = ({ onAdd }) => {
+  // const label = gender === "male" ? "Brother" : "Sister";
   return (
-    <div className="space-y-2">
-      <div className="font-medium">{label}</div>
-      <div className="flex flex-wrap gap-2">
-        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender, age: "elder" })}>Elder</button>
-        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender, age: "younger" })}>Younger</button>
-        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender, age: "unknown" })}>(Age unknown)</button>
+    <div className="grid grid-cols-2 gap-2">
+      <div className="col-start-1">
+        <div className="font-medium">Brother</div>
+        {/* <div className="flex flex-wrap gap-2"> */}
+        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender: "male", age: "elder" })}>Elder brother</button>
+        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender: "male", age: "younger" })}>Younger brother</button>
+        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender: "male", age: "unknown" })}>(Unknown) brother</button>
+      </div>
+      <div className="col-start-2">
+        <div className="font-medium">Sister</div>
+        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender: "female", age: "elder" })}>Elder sister</button>
+        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender: "female", age: "younger" })}>Younger sister</button>
+        <button className="rounded-xl border px-3 py-2 hover:bg-gray-50" onClick={() => onAdd({ kind: "sibling", gender: "female", age: "unknown" })}>(Unknown) sister</button>
+        {/* </div> */}
       </div>
     </div>
   );
@@ -317,8 +343,8 @@ const Examples: React.FC<{ onRun: (s: StepType[]) => void }> = ({ onRun }) => {
     { name: "Mother’s mother’s brother’s daughter", steps: [{ kind: "mother" }, { kind: "mother" }, { kind: "sibling", gender: "male", age: "unknown" }, { kind: "daughter" }] },
     { name: "Mother’s brother", steps: [{ kind: "mother" }, { kind: "sibling", gender: "male", age: "unknown" }] },
     { name: "Father’s sister", steps: [{ kind: "father" }, { kind: "sibling", gender: "female", age: "unknown" }] },
-    { name: "Spouse’s elder sister", steps: [{ kind: "spouse" }, { kind: "sibling", gender: "female", age: "elder" }] },
-    { name: "Spouse’s younger brother", steps: [{ kind: "spouse" }, { kind: "sibling", gender: "male", age: "younger" }] },
+    { name: "Husband's elder sister", steps: [{ kind: "husband" }, { kind: "sibling", gender: "female", age: "elder" }] },
+    { name: "Wife's younger brother", steps: [{ kind: "wife" }, { kind: "sibling", gender: "male", age: "younger" }] },
     { name: "Maternal cousin (uncle’s child)", steps: [{ kind: "mother" }, { kind: "sibling", gender: "male", age: "unknown" }, { kind: "son" }] },
     { name: "Paternal cousin (aunt’s daughter)", steps: [{ kind: "father" }, { kind: "sibling", gender: "female", age: "unknown" }, { kind: "daughter" }] },
   ];
