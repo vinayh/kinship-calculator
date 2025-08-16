@@ -106,7 +106,7 @@ function simulate(userGender: Gender, steps: StepType[]): Person[] {
 }
 
 // Figure out the Kannada kinship term for the located person relative to YOU
-function labelFor(person: Person, path: StepType[], userGender: Gender, trace?: Person[]): string {
+function labelFor(person: Person, path: StepType[], trace?: Person[]): string {
   const { col, row, gender, noSiblingInGeneration } = person;
   const last = path[path.length - 1];
   console.log(path)
@@ -229,7 +229,7 @@ function App() {
   const trace = useMemo(() => simulate(userGender, steps), [steps, userGender]);
   const dest = trace[trace.length - 1];
 
-  const label = useMemo(() => labelFor(dest, steps, userGender, trace), [dest, steps, userGender, trace]);
+  const label = useMemo(() => labelFor(dest, steps, trace), [dest, steps, userGender, trace]);
 
   const add = (s: StepType) => setSteps(prev => [...prev, s]);
   const pop = () => setSteps(prev => prev.slice(0, -1));
